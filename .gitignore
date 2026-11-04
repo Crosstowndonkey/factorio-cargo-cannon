@@ -1,0 +1,4 @@
+dist/
+.claude/
+__pycache__/
+old-builds/

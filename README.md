@@ -20,6 +20,13 @@ A Factorio 2.1 / Space Age mod: fire capsules of cargo between surfaces.
 
 All numbers are mod settings. The art is Factorio's own (the artillery turret and cargo landing pad, tinted).
 
+**Optional Space Exploration art:** if Earendel's graphics mods
+[space-exploration-graphics](https://mods.factorio.com/mod/space-exploration-graphics) and
+[space-exploration-graphics-5](https://mods.factorio.com/mod/space-exploration-graphics-5) are installed, the cannon,
+receiver, capsules and icons use his delivery cannon art instead (with his kind permission). This mod only refers to
+those files; none of them are copied into it. A startup setting turns it off. (Those two mods are graphics only and
+work alongside Space Age; Space Exploration itself doesn't.)
+
 Inspired by the delivery cannon in Earendel's [Space Exploration](https://mods.factorio.com/mod/space-exploration).
 This is an independent mod for Space Age, written from scratch - not a port of Space Exploration and not affiliated
 with it.

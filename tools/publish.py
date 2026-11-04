@@ -53,9 +53,9 @@ def main():
     if first:
         upload_url = curl(f"{API}/init_publish", [("mod", MOD)])["upload_url"]
         result = curl(upload_url, [("file", "@" + zip_path), ("description", "<" + os.path.join(ROOT, "docs", "portal-description.md")),
-                                   ("category", "utilities"), ("license", "default_mit"), ("source_url", SOURCE)], auth=False)
+                                   ("category", "content"), ("license", "default_mit"), ("source_url", SOURCE)], auth=False)
         print("Published:", result.get("url"))
-        details = curl(f"{API}/edit_details", [("mod", MOD), ("tags", "logistic-network"), ("tags", "trains"),
+        details = curl(f"{API}/edit_details", [("mod", MOD), ("tags", "transportation"), ("tags", "logistics"), ("tags", "circuit-network"),
                                                ("homepage", SOURCE)])
         print("Details:", details.get("url"))
         image_url = curl(f"{API}/images/add", [("mod", MOD)])["upload_url"]

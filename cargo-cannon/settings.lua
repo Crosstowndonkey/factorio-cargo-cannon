@@ -16,4 +16,7 @@ data:extend({
    default_value = 20, minimum_value = 1, maximum_value = 10000, order = "c1"},
   {type = "double-setting", name = "cargo-cannon-crash-damage", setting_type = "startup",
    default_value = 1, minimum_value = 0, maximum_value = 100, order = "c2"},
+  -- only does something when Space Exploration's graphics mods are installed (see data.lua)
+  {type = "bool-setting", name = "cargo-cannon-se-graphics", setting_type = "startup",
+   default_value = true, order = "c3"},
 })

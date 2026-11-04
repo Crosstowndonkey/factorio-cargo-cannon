@@ -1,6 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.1.0
-Date: 2026-11-02
+Date: 2026-11-04
   Features:
     - Cargo cannon and cargo receiver: fire one stack of cargo per capsule between a planet and the space
       platforms above it (orbit shots), and after research across space to other planets (interplanetary shots).
@@ -14,3 +14,6 @@ Date: 2026-11-02
       circuit network, and its contents like a chest.
     - The cannon is a requester chest and the receiver a passive provider for robots; inserters work with both.
     - Settings are copied by copy / paste and kept in blueprints.
+    - Optional: with Space Exploration's graphics mods installed (space-exploration-graphics and
+      space-exploration-graphics-5), the buildings, capsules and icons use Earendel's delivery cannon art, with his
+      permission. A startup setting turns it off. Building sizes stay the same either way.

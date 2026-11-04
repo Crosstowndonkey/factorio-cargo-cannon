@@ -1,5 +1,8 @@
 -- Cargo Cannon: prototypes. Every picture and sound is Factorio's own (the artillery turret, the cargo landing
 -- pad, the artillery shell), copied from the game's prototypes and tinted - the mod ships no art of its own.
+-- Optional: when Earendel's Space Exploration graphics mods are installed (and the startup setting is on), the
+-- buildings, capsule and icons use his delivery cannon art instead, by reference only (used with his permission,
+-- 2026-11-03). Nothing is copied: the files stay in his mods.
 
 local util = require("util")
 
@@ -55,11 +58,48 @@ local function tinted_icon(path, tint, size)
   return {{icon = path, icon_size = size or 64, tint = tint}}
 end
 
+-- Which art to use: icons per role here; the pictures are swapped below.
+local SE = "__space-exploration-graphics__/graphics/"
+local SE5 = "__space-exploration-graphics-5__/graphics/entity/delivery-cannon/"
+local se_art = mods["space-exploration-graphics"] and mods["space-exploration-graphics-5"]
+               and settings.startup["cargo-cannon-se-graphics"].value
+local icon = {
+  cannon = tinted_icon("__base__/graphics/icons/artillery-turret.png", CANNON_TINT),
+  receiver = tinted_icon("__base__/graphics/icons/cargo-landing-pad.png", RECEIVER_TINT),
+  capsule = tinted_icon("__base__/graphics/icons/artillery-shell.png", CAPSULE_TINT),
+  tech = tinted_icon("__base__/graphics/technology/artillery.png", CANNON_TINT, 256),
+  tech_far = tinted_icon("__base__/graphics/technology/artillery-range.png", CANNON_TINT, 256),
+}
+
+if se_art then
+  icon.cannon = {{icon = SE .. "icons/delivery-cannon.png", icon_size = 64}}
+  icon.receiver = {{icon = SE .. "icons/delivery-cannon-chest.png", icon_size = 64}}
+  icon.capsule = {{icon = SE .. "icons/delivery-cannon-capsule.png", icon_size = 64}}
+  icon.tech = {{icon = SE .. "technology/delivery-cannon.png", icon_size = 128}}
+  icon.tech_far = {
+    {icon = SE .. "technology/delivery-cannon.png", icon_size = 128},
+    {icon = "__space-age__/graphics/icons/starmap-planet-vulcanus.png", icon_size = 512, scale = 0.1, shift = {40, 40}},
+  }
+  -- SE's cannon is 5x5 and its receiving chest 3x3; ours are 3x3 and 5x5, so the pictures are scaled to fit
+  -- (the buildings' sizes never change, so saves and blueprints work the same with or without this art).
+  local C, R = 3 / 5, 5 / 3
+  cannon_layers = {
+    {filename = SE5 .. "delivery-cannon.png", width = 320, height = 640, scale = 0.5 * C, shift = {0, -2.5 * C}},
+    {filename = SE5 .. "delivery-cannon-shadow.png", width = 470, height = 306, scale = 0.5 * C,
+     shift = {1.25 * C, 1 / 32}, draw_as_shadow = true},
+  }
+  receiver_layers = {
+    {filename = SE5 .. "delivery-cannon-chest.png", width = 208, height = 200, scale = 0.5 * R, shift = {0, 0}},
+    {filename = SE5 .. "delivery-cannon-chest-shadow.png", width = 278, height = 150, scale = 0.5 * R,
+     shift = {0.5625 * R, 0.5875 * R}, draw_as_shadow = true},
+  }
+end
+
 -- Hidden helpers: a power buffer and a circuit readout, placed on the cannon by script.
 local energy = {
   type = "electric-energy-interface",
   name = "cargo-cannon-energy",
-  icons = tinted_icon("__base__/graphics/icons/artillery-turret.png", CANNON_TINT),
+  icons = icon.cannon,
   flags = {"not-on-map", "not-blueprintable", "not-deconstructable", "placeable-off-grid", "not-in-kill-statistics",
            "no-copy-paste"},
   hidden = true,
@@ -104,7 +144,7 @@ local cannon = {
   type = "logistic-container",
   logistic_mode = "requester",   -- robots bring capsules and cargo you request; inserters work too
   name = "cargo-cannon",
-  icons = tinted_icon("__base__/graphics/icons/artillery-turret.png", CANNON_TINT),
+  icons = icon.cannon,
   flags = {"placeable-player", "player-creation"},
   minable = {mining_time = 1, result = "cargo-cannon"},
   max_health = 1500,
@@ -129,7 +169,7 @@ local receiver = {
   type = "logistic-container",
   logistic_mode = "passive-provider",   -- robots take arrivals out as they're needed; inserters work too
   name = "cargo-cannon-receiver",
-  icons = tinted_icon("__base__/graphics/icons/cargo-landing-pad.png", RECEIVER_TINT),
+  icons = icon.receiver,
   flags = {"placeable-player", "player-creation"},
   minable = {mining_time = 1, result = "cargo-cannon-receiver"},
   max_health = 1000,
@@ -153,6 +193,12 @@ flight.name = "cargo-cannon-capsule-flight"
 flight.reveal_map = false
 flight.action, flight.final_action, flight.chart_picture = nil, nil, nil
 flight.picture.tint = CAPSULE_TINT
+if se_art then
+  flight.picture = {filename = SE5 .. "delivery-cannon-capsule.png", width = 58, height = 94, scale = 0.25,
+                    priority = "high"}
+  flight.shadow = {filename = SE5 .. "delivery-cannon-capsule-shadow.png", width = 98, height = 50, scale = 0.25,
+                   priority = "high", draw_as_shadow = true}
+end
 
 -- A capsule that lands where it can't be caught: a grenade's blast (x the crash damage setting).
 local crash = util.table.deepcopy(data.raw.projectile.grenade)
@@ -179,7 +225,7 @@ data:extend({
   {
     type = "virtual-signal",
     name = "cargo-cannon-receiver-space",
-    icons = tinted_icon("__base__/graphics/icons/cargo-landing-pad.png", RECEIVER_TINT),
+    icons = icon.receiver,
     subgroup = "virtual-signal",
     order = "z[cargo-cannon]-a",
   },
@@ -193,7 +239,7 @@ data:extend({
   {
     type = "item",
     name = "cargo-cannon",
-    icons = tinted_icon("__base__/graphics/icons/artillery-turret.png", CANNON_TINT),
+    icons = icon.cannon,
     subgroup = "space-related",
     order = "z[cargo-cannon]-a",
     place_result = "cargo-cannon",
@@ -203,7 +249,7 @@ data:extend({
   {
     type = "item",
     name = "cargo-cannon-receiver",
-    icons = tinted_icon("__base__/graphics/icons/cargo-landing-pad.png", RECEIVER_TINT),
+    icons = icon.receiver,
     subgroup = "space-related",
     order = "z[cargo-cannon]-b",
     place_result = "cargo-cannon-receiver",
@@ -213,7 +259,7 @@ data:extend({
   {
     type = "item",
     name = "cargo-cannon-capsule",
-    icons = tinted_icon("__base__/graphics/icons/artillery-shell.png", CAPSULE_TINT),
+    icons = icon.capsule,
     subgroup = "space-related",
     order = "z[cargo-cannon]-c",
     stack_size = 50,
@@ -259,7 +305,7 @@ data:extend({
   {
     type = "technology",
     name = "cargo-cannon",
-    icons = tinted_icon("__base__/graphics/technology/artillery.png", CANNON_TINT, 256),
+    icons = icon.tech,
     prerequisites = {"rocket-silo"},
     effects = {
       {type = "unlock-recipe", recipe = "cargo-cannon"},
@@ -278,7 +324,7 @@ data:extend({
   {
     type = "technology",
     name = "cargo-cannon-interplanetary",
-    icons = tinted_icon("__base__/graphics/technology/artillery-range.png", CANNON_TINT, 256),
+    icons = icon.tech_far,
     prerequisites = {"cargo-cannon", "space-platform-thruster"},
     effects = {{type = "nothing", effect_description = {"technology-description.cargo-cannon-interplanetary-effect"}}},
     unit = {

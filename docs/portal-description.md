@@ -41,12 +41,20 @@ Wire it to fire only while Receiver space > 0 and nothing will ever crash.
 Energy, capsules and flight time for each kind of shot, the cannon's charging rate and the crash damage are all mod
 settings.
 
+## Optional: Space Exploration's cannon art
+Install Earendel's graphics mods [space-exploration-graphics](https://mods.factorio.com/mod/space-exploration-graphics)
+and [space-exploration-graphics-5](https://mods.factorio.com/mod/space-exploration-graphics-5) and the cannon,
+receiver, capsules and icons use his delivery cannon art instead. They're graphics only, so they work alongside Space
+Age (Space Exploration itself doesn't). The startup setting *Use Space Exploration's cannon art* turns it off.
+The buildings keep the same size either way, so saves and blueprints aren't affected.
+
 ## Credits
 Inspired by the delivery cannon in Earendel's [Space Exploration](https://mods.factorio.com/mod/space-exploration) -
 thank you, Earendel. This is an independent mod for Space Age, written from scratch: not a port of Space Exploration,
 and not affiliated with it or its author.
 
 The buildings use Factorio's own art (the artillery turret and cargo landing pad), tinted; the mod contains no images
-of its own.
+of its own. With Space Exploration's graphics mods installed, they use Earendel's delivery cannon art instead, with his
+permission - the art stays in his mods and is only referred to, never copied.
 
 Source code (MIT): https://github.com/Crosstowndonkey/factorio-cargo-cannon

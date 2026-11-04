@@ -2,6 +2,7 @@
 # Runs the test suites headless in a throwaway folder (never touches ~/.factorio).
 # Usage: tools/run_tests.sh [suite ...]      suites: main circuit situations saveload (default: all)
 # FACTORIO=/path/to/factorio overrides the game binary.
+# SE_GFX=/folder/with/zips also loads space-exploration-graphics and -5 from that folder (the optional SE art).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FACTORIO="${FACTORIO:-/mnt/GamingSSD/SteamLibrary/steamapps/common/Factorio/bin/x64/factorio}"
@@ -13,12 +14,21 @@ mkdir -p "$WORK/mods" "$WORK/write"
 ln -s "$ROOT/cargo-cannon" "$WORK/mods/cargo-cannon"
 ln -s "$ROOT/tests/dc-tests" "$WORK/mods/dc-tests"
 ln -s "$ROOT/tests/dc-saveload" "$WORK/mods/dc-saveload"
+SE_MODS=""
+if [ -n "$SE_GFX" ]; then
+  for m in space-exploration-graphics space-exploration-graphics-5; do
+    z=$(ls "$SE_GFX"/${m}_[0-9]*.zip | tail -1)
+    ln -s "$z" "$WORK/mods/$(basename "$z")"
+    SE_MODS="$SE_MODS,{\"name\":\"$m\",\"enabled\":true}"
+  done
+  echo "(with the Space Exploration graphics mods)"
+fi
 mod_list() {  # mod_list <test mod to enable>
   cat > "$WORK/mods/mod-list.json" <<JSON
 {"mods":[{"name":"base","enabled":true},{"name":"space-age","enabled":true},{"name":"quality","enabled":true},
 {"name":"elevated-rails","enabled":true},{"name":"recycler","enabled":true},{"name":"cargo-cannon","enabled":true},
 {"name":"dc-tests","enabled":$([ "$1" = dc-tests ] && echo true || echo false)},
-{"name":"dc-saveload","enabled":$([ "$1" = dc-saveload ] && echo true || echo false)}]}
+{"name":"dc-saveload","enabled":$([ "$1" = dc-saveload ] && echo true || echo false)}$SE_MODS]}
 JSON
 }
 printf '[path]\nread-data=__PATH__system-read-data__\nwrite-data=%s\n' "$WORK/write" > "$WORK/config.ini"

@@ -8,6 +8,8 @@
   "description": "Fire capsules of cargo between surfaces: up to space platforms in orbit, back down to the planet, and later across space to receivers on other planets. Each shot needs a capsule and a big charge of power. Circuit-controlled - and a capsule that lands on a full receiver, or on nothing at all, explodes and its cargo is lost. Inspired by the delivery cannon in Earendel's Space Exploration (an independent mod, not a port).",
   "dependencies": [
     "base >= 2.1",
-    "space-age"
+    "space-age",
+    "? space-exploration-graphics >= 0.7.7",
+    "? space-exploration-graphics-5 >= 0.7.5"
   ]
 }

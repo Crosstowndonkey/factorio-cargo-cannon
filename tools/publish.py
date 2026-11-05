@@ -5,8 +5,11 @@ Reads the API key from ~/.config/factorio/modportal-api-key (never pass it on th
 The key needs the usages "ModPortal: Publish Mods", "ModPortal: Upload Mods" and "ModPortal: Edit Mods"
 (factorio.com/profile > API keys).
 
-Usage: tools/publish.py [--first]   (--first = brand-new mod: publish, then set details and gallery)
-Runs tools/package.sh first, so the zip is always fresh.
+Usage: tools/publish.py [--first | --details]
+  (nothing)  upload a new release
+  --first    brand-new mod: publish, then set details and gallery
+  --details  update the portal page from docs/portal-description.md; uploads no release
+Uploading runs tools/package.sh first, so the zip is always fresh.
 """
 import json
 import os
@@ -18,6 +21,9 @@ MOD = "cargo-cannon"
 KEY_FILE = os.path.expanduser("~/.config/factorio/modportal-api-key")
 API = "https://mods.factorio.com/api/v2/mods"
 SOURCE = "https://github.com/Crosstowndonkey/factorio-cargo-cannon"
+DESCRIPTION = os.path.join(ROOT, "docs", "portal-description.md")
+# sent with every details update, so they can't be cleared by being left out
+DETAILS = [("tags", "transportation"), ("tags", "logistics"), ("tags", "circuit-network"), ("homepage", SOURCE)]
 
 
 def key():
@@ -45,6 +51,11 @@ def curl(url, fields, auth=True):
 
 
 def main():
+    if "--details" in sys.argv:
+        details = curl(f"{API}/edit_details", [("mod", MOD), ("description", "<" + DESCRIPTION)] + DETAILS)
+        print("Details updated:", details.get("url"))
+        print(f"https://mods.factorio.com/mod/{MOD}")
+        return
     first = "--first" in sys.argv
     zip_path = subprocess.run([os.path.join(ROOT, "tools", "package.sh")], capture_output=True, text=True,
                               check=True).stdout.strip()
@@ -52,11 +63,10 @@ def main():
 
     if first:
         upload_url = curl(f"{API}/init_publish", [("mod", MOD)])["upload_url"]
-        result = curl(upload_url, [("file", "@" + zip_path), ("description", "<" + os.path.join(ROOT, "docs", "portal-description.md")),
+        result = curl(upload_url, [("file", "@" + zip_path), ("description", "<" + DESCRIPTION),
                                    ("category", "content"), ("license", "default_mit"), ("source_url", SOURCE)], auth=False)
         print("Published:", result.get("url"))
-        details = curl(f"{API}/edit_details", [("mod", MOD), ("tags", "transportation"), ("tags", "logistics"), ("tags", "circuit-network"),
-                                               ("homepage", SOURCE)])
+        details = curl(f"{API}/edit_details", [("mod", MOD)] + DETAILS)
         print("Details:", details.get("url"))
         image_url = curl(f"{API}/images/add", [("mod", MOD)])["upload_url"]
         image = curl(image_url, [("image", "@" + os.path.join(ROOT, "docs", "screenshot.png"))], auth=False)

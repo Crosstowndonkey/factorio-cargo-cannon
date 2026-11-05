@@ -1,4 +1,27 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.0
+Date: 2026-11-05
+  Changes:
+    - The cannon now fires by the game's own Enable if condition, in the Circuit connection panel. The second
+      condition in the Cargo cannon panel is gone; conditions from older saves and blueprints move across automatically.
+    - The condition can compare against a second signal, and while it's false robots stop loading the cannon.
+    - The Cargo cannon panel now shows Receiver space and Cannon charge by name, with their current values.
+    - Receiver space has its own icon, so it can't be mistaken for the cargo receiver item.
+    - The cannon's signals now go on one wire: the one you connected, or red if both are connected.
+    - The panel's status messages now say what to do next: where to build a receiver, how many capsules a shot needs,
+      and when the cannon has no power.
+  Features:
+    - The cannon's tooltip shows its maximum charging power.
+    - Higher quality cannons charge faster, with a higher maximum power draw: up to 6x at legendary.
+  Bugfixes:
+    - Fixed a crash when a cannon's cargo or target signal came from a mod that has since been removed.
+    - Upgrading a cannon or receiver to a higher quality now keeps its settings. Cannons stay aimed at an upgraded
+      receiver, and capsules already on their way still land in it.
+    - A cannon or receiver destroyed and rebuilt from its ghost keeps its settings.
+    - The Receiver space and Cannon charge signals are no longer counted twice by the cannon's own condition.
+    - Higher quality cannons no longer get extra slots, which trapped cargo the cannon could never fire. A cannon
+      always has 2 slots. Anything already in the extra slots of a rare or better cannon is lost in this update.
+---------------------------------------------------------------------------------------------------
 Version: 0.1.0
 Date: 2026-11-04
   Features:

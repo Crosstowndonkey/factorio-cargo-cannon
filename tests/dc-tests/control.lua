@@ -1,7 +1,7 @@
 -- Test harness for Cargo Cannon (not part of the mod). Run with --test-save and --test-arg <suite>
 -- (tools/run_tests.sh does it): the suite builds its world on tick 1, runs, prints STA PASS / FAIL lines and finishes.
 local common = require("common")
-local SUITES = {main = require("main"), circuit = require("circuit"), situations = require("situations")}
+local SUITES = {main = require("main"), circuit = require("circuit"), situations = require("situations"), edge = require("edge")}
 
 script.on_event(defines.events.on_tick, function(e)
   if e.tick == 0 then return end

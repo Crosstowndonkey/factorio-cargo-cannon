@@ -95,6 +95,17 @@ if se_art then
   }
 end
 
+-- Receiver space must not look like the cargo receiver item (they're different signals): the receiver with a tick.
+icon.receiver_space = util.table.deepcopy(icon.receiver)
+table.insert(icon.receiver_space, {icon = "__base__/graphics/icons/signal/signal-checked-green.png", icon_size = 64,
+                                   scale = 0.3, shift = {9, 9}})
+
+-- The draw shown in the cannon's tooltip; control.lua applies the same numbers to each cannon.
+local QUALITY_POWER = 1   -- +100% per quality level, as an accumulator's capacity: legendary = 6x
+local function power_text(level) return string.format("%g MW", charge_rate * (1 + QUALITY_POWER * level)) end
+local quality_power = {}
+for name, quality in pairs(data.raw.quality or {}) do quality_power[name] = power_text(quality.level or 0) end
+
 -- Hidden helpers: a power buffer and a circuit readout, placed on the cannon by script.
 local energy = {
   type = "electric-energy-interface",
@@ -159,10 +170,13 @@ local cannon = {
   close_sound = artillery.close_sound,
   -- slot 1 = capsules (filtered by script), slot 2 = the cargo
   inventory_size = 2,
+  quality_affects_inventory_size = false,   -- it only ever fires from slot 2: more slots would just trap cargo
   inventory_type = "with_filters_and_bar",
   picture = {layers = cannon_layers},
   circuit_connector = {artillery.circuit_connector},
   circuit_wire_max_distance = artillery.circuit_wire_max_distance,
+  custom_tooltip_fields = {{name = {"cargo-cannon.max-power"}, value = power_text(0), order = 0,
+                            quality_header = "quality-tooltip.maximum-power-input", quality_values = quality_power}},
 }
 
 local receiver = {
@@ -225,7 +239,7 @@ data:extend({
   {
     type = "virtual-signal",
     name = "cargo-cannon-receiver-space",
-    icons = icon.receiver,
+    icons = icon.receiver_space,
     subgroup = "virtual-signal",
     order = "z[cargo-cannon]-a",
   },

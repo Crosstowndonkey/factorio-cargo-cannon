@@ -36,6 +36,13 @@ function S.setup(T)
   T.down = C.cannon(p, {0, 0}, T.down_rx, "iron-gear-wheel", 100)
   T.wants = n.create_entity{name = "requester-chest", position = {-6, 4}, force = f}
   T.wants.get_logistic_sections().add_section().set_slot(1, {value = {name = "iron-gear-wheel", quality = "normal"}, min = 20})
+  -- 6b. the condition also stops robots: two cannons asking for capsules, one held by a false condition
+  T.load_on = C.build(n, "cargo-cannon", {-14, 8})
+  T.load_off = C.build(n, "cargo-cannon", {-14, 14})
+  for _, c in pairs({T.load_on, T.load_off}) do
+    c.get_logistic_sections().add_section().set_slot(1, {value = {name = "cargo-cannon-capsule", quality = "normal"}, min = 5})
+  end
+  C.native(T.load_off, {first_signal = C.sig("signal-A"), comparator = ">", constant = 0})
   -- 7. circuit enable: signal A > 0, no signal at first
   T.circ = C.cannon(n, {30, -20}, T.up_rx, "stone-brick", 100, {circuit_enable = true,
      condition = {signal = C.sig("signal-A"), comparator = ">", constant = 0}})
@@ -109,6 +116,9 @@ function S.tick(T, tick)
     check("target by signal: plastic reached the channel's receiver", count(T.sig_rx, "plastic-bar") == 100, count(T.sig_rx, "plastic-bar"))
     check("receiver removed mid-flight: sulfur lost, nothing left in the air", T.removed and DC("flights") == 0, "flights " .. DC("flights"))
     check("robots: brought the requested capsules", count(T.bots, "cargo-cannon-capsule") >= 5, count(T.bots, "cargo-cannon-capsule"))
+    check("robots: a false condition stops them loading the cannon",
+          count(T.load_on, "cargo-cannon-capsule") >= 5 and count(T.load_off, "cargo-cannon-capsule") == 0,
+          count(T.load_on, "cargo-cannon-capsule") .. " / " .. count(T.load_off, "cargo-cannon-capsule"))
     local inv = T.ins_cannon.get_inventory(CHEST)
     check("inserter: capsules only fill slot 1 (cargo slot keeps for iron)",
           inv[1].valid_for_read and inv[1].count == 50 and not inv[2].valid_for_read,

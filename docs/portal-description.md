@@ -27,7 +27,7 @@ The cannon tells its circuit network what it needs to know:
 Wire it to fire only while Receiver space > 0 and nothing will ever crash.
 
 ## Circuit control
-- An enable / disable condition, like an inserter's: one signal, Anything or Everything.
+- The game's own **Enable if** condition, in the Circuit connection panel, decides when the cannon fires.
 - Or pick the target by signal: the signal's value is a receiver's channel number (0 = hold fire).
 - Several cannons can share a wire: each one's condition reads its own Receiver space and charge.
 

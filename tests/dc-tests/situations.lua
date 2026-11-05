@@ -117,6 +117,9 @@ function S.setup(T)
   T.ghost = n.create_entity{name = "entity-ghost", inner_name = "cargo-cannon", position = {12, 0}, force = "player",
     tags = {dc_settings = {cargo = {name = "pipe", quality = "normal"}, full_stack = false, circuit_enable = true,
             condition = {signal = C.sig("signal-D"), comparator = "<", constant = 3}}}}
+  -- 19b. quality: a legendary cannon charges 6x as fast
+  T.plain_power = C.build(n, "cargo-cannon", {28, 0})
+  T.legend_power = n.create_entity{name = "cargo-cannon", position = {34, 0}, force = "player", quality = "legendary", raise_built = true}
   -- 20. GUI
   T.gui_cannon = C.cannon(n, {20, 0}, T.cp_rx, "iron-plate", 50)
   T.gui_rx = C.build(n, "cargo-cannon-receiver", {16, 9})
@@ -185,15 +188,26 @@ function S.tick(T, tick)
     T.cp_dst.copy_settings(T.cp_src, player)
     local d = DC("cannon", T.cp_dst)
     check("copy/paste: settings copied", d.target == T.cp_rx.unit_number and d.cargo and d.cargo.name == "copper-cable" and
-          d.full_stack == false and d.circuit_enable and d.condition.comparator == "≤" and d.condition.constant == 12 and
-          d.condition.signal.name == "signal-B", serpent.line(d.condition))
+          d.full_stack == false, serpent.line(d.cargo))
+    local dcb = T.cp_dst.get_control_behavior()
+    local dcond = dcb.circuit_condition
+    check("copy/paste: the game copies the condition", dcb.circuit_condition_enabled and dcond.constant == 12 and
+          dcond.first_signal and dcond.first_signal.name == "signal-B", serpent.line(dcond))
     local f2 = T.cp_dst.get_inventory(CHEST).get_filter(2)
     check("copy/paste: the cargo slot filter follows", f2 and f2.name == "copper-cable", serpent.line(f2))
     -- ghost revive
     local _, cannon = T.ghost.revive{raise_revive = true}
     local g = cannon and DC("cannon", cannon)
-    check("blueprint tags: a revived ghost gets the settings", g and g.cargo and g.cargo.name == "pipe" and g.full_stack == false and
-          g.condition.signal.name == "signal-D" and g.condition.constant == 3, g and serpent.line(g.cargo))
+    check("blueprint tags: a revived ghost gets the settings", g and g.cargo and g.cargo.name == "pipe" and g.full_stack == false,
+          g and serpent.line(g.cargo))
+    local gc = cannon and cannon.get_control_behavior()
+    check("a 0.1.0 blueprint: its condition moves to the game's own", gc and gc.circuit_condition_enabled and
+          gc.circuit_condition.first_signal.name == "signal-D" and gc.circuit_condition.constant == 3 and not g.condition,
+          gc and serpent.line(gc.circuit_condition))
+    local base = DC("cannon", T.plain_power).energy.input_flow_limit
+    local legend = DC("cannon", T.legend_power).energy.input_flow_limit
+    check("quality: 20 MW for a normal cannon", math.abs(base * 60 - 20e6) < 1, base * 60)
+    check("quality: a legendary cannon draws 6x", math.abs(legend / base - 6) < 0.001, legend / base)
     -- a blueprint of the area holds only the cannon (the hidden helpers aren't blueprintable)
     local bpinv = game.create_inventory(1)
     bpinv[1].set_stack("blueprint")
@@ -202,11 +216,16 @@ function S.tick(T, tick)
     for _, be in pairs(bpinv[1].get_blueprint_entities() or {}) do names[be.name] = (names[be.name] or 0) + 1 end
     check("blueprint: only the cannon is in it", names["cargo-cannon"] == 1 and not names["cargo-cannon-energy"] and
           not names["cargo-cannon-readout"], serpent.line(names))
+    bpinv[1].create_blueprint{surface = n, force = "player", area = {{-2, -2}, {2, 2}}}
+    local held = serpent.line((bpinv[1].get_blueprint_entities() or {})[1])
+    check("blueprint: the game keeps the condition", held:find("signal-B", 1, true) ~= nil, held)
     bpinv.destroy()
     -- GUI
     local ok, err = opened_ok(player, T.gui_cannon)
     local frame = player.gui.relative.dc_panel
-    check("GUI: opening a cannon shows the panel", ok and has(frame, "dc_target") and has(frame, "dc_cargo") and has(frame, "dc_cond_signal") and has(frame, "dc_target_signal"), err)
+    check("GUI: opening a cannon shows the panel", ok and has(frame, "dc_target") and has(frame, "dc_cargo") and has(frame, "dc_target_signal") and has(frame, "dc_space") and
+          has(frame, "dc_charge_signal"), err)
+    check("GUI: no second condition in the panel", frame and not has(frame, "dc_cond_signal") and not has(frame, "dc_circuit_enable"))
   end
   if tick == 65 then
     local frame = player.gui.relative.dc_panel
@@ -240,7 +259,7 @@ function S.tick(T, tick)
     check("armour: arrived with its equipment", armour and armour.grid and #armour.grid.equipment == 2,
           armour and armour.grid and #armour.grid.equipment)
     check("not full stacks only: 30 plates fired", count(T.part, "iron-plate") == 0, C.status(T.part))
-    check("no power: still charging, nothing fired", count(T.nopower, "iron-plate") == 100 and C.status(T.nopower) == "charging",
+    check("no power: says so, nothing fired", count(T.nopower, "iron-plate") == 100 and C.status(T.nopower) == "no-power",
           C.status(T.nopower))
     check("cargo picked changed: the old stack waits, nothing lost", count(T.change, "iron-plate") == 50 and C.status(T.change) == "wrong-cargo",
           C.status(T.change))

@@ -99,8 +99,9 @@ script.on_event(defines.events.on_tick, function(e)
     check("after loading: the 3 capsules are still in the air", DC("flights") == 3 and e.tick < 3600, DC("flights") .. " at tick " .. e.tick)
     T.gone_rx.destroy()
     local c = DC("cannon", T.held)
-    check("after loading: settings kept", c.circuit_enable and c.condition.comparator == ">" and c.cargo.name == "wood",
-          serpent.line(c.condition))
+    local cb = T.held.get_control_behavior()
+    check("after loading: settings kept", cb.circuit_condition_enabled and cb.circuit_condition.comparator == ">" and c.cargo.name == "wood",
+          serpent.line(cb.circuit_condition))
     return
   end
   if e.tick == storage.loaded_at + 30 then

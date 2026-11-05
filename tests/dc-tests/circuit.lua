@@ -131,6 +131,35 @@ function S.setup(T)
   lcb.circuit_enable_disable = true
   lcb.circuit_condition = {first_signal = C.sig(C.SPACE), comparator = ">", constant = 10}
 
+  -- 16b. a player who only uses green: the signals move to green
+  T.ro_g = C.build(n, "cargo-cannon", {-7, -4})
+  DC("set_target", T.ro_g, T.ro_rx)
+  T.lamp_only_green = n.create_entity{name = "small-lamp", position = {-7, 0}, force = "player"}
+  T.lamp_only_green.get_wire_connector(GREEN, true).connect_to(T.ro_g.get_wire_connector(GREEN, true))
+  -- 16c. both wires connected: nothing the cannon sends is counted twice in its own condition
+  T.two_rx = C.build(p, "cargo-cannon-receiver", {30, 20})
+  T.two = C.cannon(n, {1, -4}, T.two_rx, "iron-plate", 100, cond(C.CHARGE, "=", 100))
+  C.combinator(n, {0, 0}, {["signal-A"] = 1}, T.two, {RED})
+  C.combinator(n, {2, 0}, {["signal-B"] = 1}, T.two, {GREEN})
+  -- 16d. the game's condition: compared with a second signal (A = 5, B = 3 and 9)
+  T.vs_rx = C.build(p, "cargo-cannon-receiver", {20, 20})
+  T.vs_yes = C.cannon(n, {9, -4}, T.vs_rx, "iron-plate", 100)
+  C.native(T.vs_yes, {first_signal = C.sig("signal-A"), comparator = ">", second_signal = C.sig("signal-B")})
+  C.combinator(n, {9, 0}, {["signal-A"] = 5, ["signal-B"] = 3}, T.vs_yes)
+  T.vs_no = C.cannon(n, {17, -4}, T.vs_rx, "iron-plate", 100)
+  C.native(T.vs_no, {first_signal = C.sig("signal-A"), comparator = ">", second_signal = C.sig("signal-B")})
+  C.combinator(n, {17, 0}, {["signal-A"] = 5, ["signal-B"] = 9}, T.vs_no)
+  -- 16e. its own signal against a second signal: space (40) > B
+  T.own_vs_no = C.cannon(n, {25, -4}, T.vs_rx, "iron-plate", 100)
+  C.native(T.own_vs_no, {first_signal = C.sig(C.SPACE), comparator = ">", second_signal = C.sig("signal-B")})
+  C.combinator(n, {25, 0}, {["signal-B"] = 100}, T.own_vs_no)
+  T.own_vs_yes = C.cannon(n, {33, -4}, T.vs_rx, "iron-plate", 100)
+  C.native(T.own_vs_yes, {first_signal = C.sig(C.SPACE), comparator = ">", second_signal = C.sig("signal-B")})
+  C.combinator(n, {33, 0}, {["signal-B"] = 1}, T.own_vs_yes)
+  -- 16f. a condition that's switched off doesn't hold fire
+  T.off = C.cannon(n, {41, -4}, T.vs_rx, "iron-plate", 100)
+  C.native(T.off, {first_signal = C.sig("signal-A"), comparator = ">", constant = 0}, false)
+
   -- 17. special signals. Condition: Anything / Everything work as on an inserter (A = 5, plus the cannon's own
   --     contents and readouts); Each is refused by the GUI and never fires. Target signal: special = no target.
   T.spec_rx = C.build(p, "cargo-cannon-receiver", {-30, 20})
@@ -165,8 +194,10 @@ function S.tick(T, tick)
   if tick == 100 then
     C.set_value(T.tog_cc, 1, "signal-A", 1)
     check("readout on red: other machines see receiver space 40", sig_at(T.lamp_red, C.SPACE, RED) == 40, sig_at(T.lamp_red, C.SPACE, RED))
-    check("readout on green: other machines see receiver space 40", sig_at(T.lamp_green, C.SPACE, GREEN) == 40,
+    check("both wires connected: the signals are on red only", sig_at(T.lamp_green, C.SPACE, GREEN) == 0,
           sig_at(T.lamp_green, C.SPACE, GREEN))
+    check("green only: the signals move to green", sig_at(T.lamp_only_green, C.SPACE, GREEN) == 40,
+          sig_at(T.lamp_only_green, C.SPACE, GREEN))
     print("STA info: the cannon's own contents on its wire: capsules = " ..
           T.lamp_red.get_signal({type = "item", name = "cargo-cannon-capsule"}, RED))
   end
@@ -212,6 +243,12 @@ function S.tick(T, tick)
     check("own contents count once: 50 plates, '>= 100' holds", not fired(T.own_half, "iron-plate"), C.status(T.own_half))
     check("own contents count once: 50 plates, '= 50' fires", fired(T.own_eq, "iron-plate"), C.status(T.own_eq))
     check("own contents + 30 from a combinator: '= 80' fires", fired(T.own_red, "iron-plate"), C.status(T.own_red))
+    check("both wires: 'charge = 100' fires (not counted twice)", fired(T.two, "iron-plate"), C.status(T.two))
+    check("second signal: A 5 > B 3 fires", fired(T.vs_yes, "iron-plate"), C.status(T.vs_yes))
+    check("second signal: A 5 > B 9 holds", not fired(T.vs_no, "iron-plate"), C.status(T.vs_no))
+    check("own signal vs second signal: space > B 100 holds", not fired(T.own_vs_no, "iron-plate"), C.status(T.own_vs_no))
+    check("own signal vs second signal: space > B 1 fires", fired(T.own_vs_yes, "iron-plate"), C.status(T.own_vs_yes))
+    check("a condition switched off doesn't hold fire", fired(T.off, "iron-plate"), C.status(T.off))
     check("no signal picked: disabled", C.status(T.nosig) == "disabled", C.status(T.nosig))
     local a, b = fired(T.one_a, "iron-ore"), fired(T.one_b, "iron-ore")
     check("one free slot, two safe cannons: exactly one fired", a ~= b, tostring(a) .. " / " .. tostring(b))

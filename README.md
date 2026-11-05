@@ -10,11 +10,12 @@ A Factorio 2.1 / Space Age mod: fire capsules of cargo between surfaces.
   for a full stack.
 - **Crashes:** a capsule that lands on a full receiver, or where there's no receiver, explodes like a grenade and
   its cargo is lost. A capsule aimed at a platform that has left orbit misses.
-- **Circuits:** an enable / disable condition like an inserter's (one signal, Anything or Everything), or pick the
-  target by signal (each receiver has a channel number). The cannon sends **Receiver space** (empty stacks in its
-  target, minus capsules already on their way), **Cannon charge** (%) and its contents to its circuit network -
-  fire only while Receiver space > 0 and nothing will crash. With several cannons on one wire, other machines see
-  their signals added up, but each cannon's condition reads its own.
+- **Circuits:** the game's own **Enable if** condition in the Circuit connection panel decides when it fires (it also
+  stops robots loading it while false), and you can pick the target by signal (each receiver has a channel number).
+  The cannon sends **Receiver space** (empty stacks in its target, minus capsules already on their way), **Cannon
+  charge** (%) and its contents to its circuit network - fire only while Receiver space > 0 and nothing will crash.
+  Its two signals go on the wire you connected, or red if both are. With several cannons on one wire, other machines
+  see their signals added up, but a condition on either signal reads that cannon's own value.
 - **Logistics:** inserters load and empty both buildings; the cannon is a requester chest and the receiver a
   passive provider for robots. (Space platforms have no robots - use inserters there.)
 
@@ -34,11 +35,13 @@ with it.
 ## Development
 
 - `tools/run_tests.sh [suite ...]` runs the tests on a headless game in a throwaway folder (never ~/.factorio):
-  - `main` (tests/dc-tests/main.lua, 24 checks): shots, crashes, robots, inserters, readouts, research;
-  - `circuit` (50): every comparator, red + green, item signals, Anything / Everything / Each, switching on and off,
+  - `main` (tests/dc-tests/main.lua, 25 checks): shots, crashes, robots, inserters, readouts, research;
+  - `circuit` (57): every comparator, a second signal, red + green, item signals, Anything / Everything / Each, switching on and off,
     targets by signal, shared wires, what other machines see;
-  - `situations` (33): platforms leaving or travelling, quality, spoilage, armour equipment, power, cannons and
+  - `situations` (39): platforms leaving or travelling, quality, spoilage, armour equipment, power, cannons and
     receivers destroyed mid-flight, a deleted planet, copy / paste, blueprints, the GUI;
+  - `edge` (26): rewiring, robot quality upgrades with a capsule in the air, destroyed and rebuilt buildings, no power,
+    cargo and signals from removed mods, helpers destroyed behind the mod's back;
   - `saveload` (tests/dc-saveload, 8): saved with capsules in the air on a headless server, loaded, and landed.
 - `tools/package.sh` builds the zip for the mod portal into dist/.
 

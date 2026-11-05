@@ -1,13 +1,13 @@
 #!/bin/bash
 # Runs the test suites headless in a throwaway folder (never touches ~/.factorio).
-# Usage: tools/run_tests.sh [suite ...]      suites: main circuit situations saveload (default: all)
+# Usage: tools/run_tests.sh [suite ...]      suites: main circuit situations edge saveload (default: all)
 # FACTORIO=/path/to/factorio overrides the game binary.
 # SE_GFX=/folder/with/zips also loads space-exploration-graphics and -5 from that folder (the optional SE art).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FACTORIO="${FACTORIO:-/mnt/GamingSSD/SteamLibrary/steamapps/common/Factorio/bin/x64/factorio}"
 SUITES=("$@")
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(main circuit situations saveload)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(main circuit situations edge saveload)
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/mods" "$WORK/write"

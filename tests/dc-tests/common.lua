@@ -96,6 +96,13 @@ function M.cannon(s, pos, rx, item, n_items, settings)
   return c
 end
 
+-- sets the game's own circuit condition on a cannon, as the normal circuit tab does
+function M.native(cannon, condition, enabled)
+  local cb = cannon.get_or_create_control_behavior()
+  cb.circuit_condition = condition
+  cb.circuit_condition_enabled = enabled ~= false
+end
+
 -- a constant combinator at pos sending {signal name = value, ...} on the wire(s) to entity
 function M.combinator(s, pos, values, entity, wires)
   local cc = s.create_entity{name = "constant-combinator", position = pos, force = "player"}

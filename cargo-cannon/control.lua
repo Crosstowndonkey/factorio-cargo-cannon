@@ -3,6 +3,8 @@
 -- A cannon is a 2-slot container: slot 1 holds capsules, slot 2 the cargo (one stack of one item per shot). Two
 -- hidden helpers sit on it: an electric-energy-interface (the charge) and a constant combinator wired to the cannon
 -- by script, which tells the circuit network how much room the target receiver has and how charged the cannon is.
+-- Whether it may fire is the game's own circuit condition, in the building's normal circuit tab (it also stops robots
+-- loading it); there is no second condition in our panel.
 --
 -- Shots:  orbit          planet <-> a platform stopped above it (or two platforms at the same place)
 --         interplanetary planet -> another planet (needs the "Interplanetary cargo" research)
@@ -17,23 +19,33 @@ local SPACE_SIGNAL = {type = "virtual", name = "cargo-cannon-receiver-space"}
 local CHARGE_SIGNAL = {type = "virtual", name = "cargo-cannon-charge"}
 local INTERPLANETARY_TECH = "cargo-cannon-interplanetary"
 local CHECK_EVERY = 10   -- ticks between updates
+local WIRE_CHECK_EVERY = 6  -- updates between looks at a cannon's wires
 local FALL_TICKS = 60    -- the falling shell is shown for this long before a capsule lands
 local RED, GREEN = defines.wire_connector_id.circuit_red, defines.wire_connector_id.circuit_green
 local CHEST = defines.inventory.chest
 
-local ANYTHING, EVERYTHING = "signal-anything", "signal-everything"
+local QUALITY_POWER = 1   -- +100% per quality level, as an accumulator's capacity: legendary (level 5) = 6x (data.lua shows the same)
 local function is_special(signal)
   local proto = signal and signal.type == "virtual" and prototypes.virtual_signal[signal.name]
   return proto and proto.special or false
 end
 
-local COMPARATORS = {">", "<", "=", "≥", "≤", "≠"}
 local function compare(a, op, b)
   if op == ">" then return a > b elseif op == "<" then return a < b elseif op == "=" then return a == b
-  elseif op == "≥" then return a >= b elseif op == "≤" then return a <= b else return a ~= b end
+  elseif op == "≥" or op == ">=" then return a >= b elseif op == "≤" or op == "<=" then return a <= b
+  else return a ~= b end
+end
+
+-- Prototype tables for each kind of signal (the rest are named the same as the signal's type)
+local SIGNAL_TABLES = {virtual = "virtual_signal", ["space-location"] = "space_location", ["asteroid-chunk"] = "asteroid_chunk"}
+local function signal_exists(signal)
+  local list = prototypes[SIGNAL_TABLES[signal.type or "item"] or signal.type or "item"]
+  return not list or list[signal.name] ~= nil
 end
 
 local function init_storage()
+  storage.fallen = storage.fallen or {}        -- unit_number -> settings of a building that just died (for its ghost)
+  storage.replaced = storage.replaced or {}    -- spot -> settings of a building mined this tick (it may be an upgrade)
   storage.cannons = storage.cannons or {}      -- unit_number -> cannon record
   storage.receivers = storage.receivers or {}  -- unit_number -> {entity, name, channel}
   storage.flights = storage.flights or {}      -- list of capsules in the air
@@ -96,8 +108,57 @@ end
 
 local function default_cannon(entity)
   return {entity = entity, target = nil, cargo = nil, full_stack = true,
-          circuit_enable = false, condition = {signal = nil, comparator = ">", constant = 0},
-          circuit_target = false, target_signal = nil, status = "no-target"}
+          circuit_target = false, target_signal = nil, status = "no-target", space = 0, charge = 0}
+end
+
+-- 0.1.0 kept its own condition in the cannon's record (and in blueprint tags): move it to the game's own.
+local function move_old_condition(c)
+  if c.circuit_enable == nil and c.condition == nil then return end
+  local old = c.condition
+  if c.circuit_enable then
+    local cb = c.entity.get_or_create_control_behavior()
+    if old and old.signal then
+      cb.circuit_condition = {first_signal = old.signal, comparator = old.comparator, constant = old.constant or 0}
+    end
+    cb.circuit_condition_enabled = true
+  end
+  c.circuit_enable, c.condition = nil, nil
+end
+
+-- A mod removed since these were picked (or a blueprint from another game): forget them, as they can't be used.
+local function forget_missing(c)
+  local cargo = c.cargo
+  if cargo and not (prototypes.item[cargo.name] and prototypes.quality[cargo.quality]) then c.cargo = nil end
+  if c.target_signal and not signal_exists(c.target_signal) then c.target_signal = nil end
+end
+
+-- A better cannon charges faster: the same draw the tooltip shows.
+local function apply_power(c)
+  local mw = settings.startup["cargo-cannon-charge-rate"].value * (1 + QUALITY_POWER * c.entity.quality.level)
+  c.energy.input_flow_limit = mw * 1e6 / 60
+end
+
+local function wired_by_player(connector, helper)
+  local wires = connector.connection_count
+  if connector.is_connected_to(helper, defines.wire_origin.script) then wires = wires - 1 end
+  return wires > 0
+end
+
+-- The readout goes on one wire only: on both, the cannon's own condition would add red + green and see everything
+-- twice. It follows the player's wire: green if only green is used, otherwise red.
+local function route_readout(c)
+  local e = c.entity
+  local red, green = e.get_wire_connector(RED, true), e.get_wire_connector(GREEN, true)
+  local out_red, out_green = c.readout.get_wire_connector(RED, true), c.readout.get_wire_connector(GREEN, true)
+  local to_green = wired_by_player(green, out_green) and not wired_by_player(red, out_red)
+  local join, join_out, leave, leave_out = red, out_red, green, out_green
+  if to_green then join, join_out, leave, leave_out = green, out_green, red, out_red end
+  if leave.is_connected_to(leave_out, defines.wire_origin.script) then
+    leave.disconnect_from(leave_out, defines.wire_origin.script)
+  end
+  if not join.is_connected_to(join_out, defines.wire_origin.script) then
+    join.connect_to(join_out, false, defines.wire_origin.script)
+  end
 end
 
 -- Slot 1 only takes capsules; slot 2 only takes the picked cargo, and is locked (inventory bar) until one is picked,
@@ -120,30 +181,23 @@ local function apply_slots(c, inv)
   end
 end
 
-local function add_cannon(entity, tags)
-  local s, pos, force = entity.surface, entity.position, entity.force
-  local c = default_cannon(entity)
-  c.energy = s.create_entity{name = ENERGY, position = pos, force = force}
-  c.energy.destructible = false
-  c.readout = s.create_entity{name = READOUT, position = pos, force = force}
-  c.readout.destructible = false
-  for _, id in pairs({RED, GREEN}) do
-    entity.get_wire_connector(id, true).connect_to(c.readout.get_wire_connector(id, true), false, defines.wire_origin.script)
+-- Makes the hidden helpers (at building time, or if something has destroyed them).
+local function make_helpers(c)
+  local e = c.entity
+  local s, pos, force = e.surface, e.position, e.force
+  if not (c.energy and c.energy.valid) then
+    c.energy = s.create_entity{name = ENERGY, position = pos, force = force}
+    c.energy.destructible = false
+    apply_power(c)
   end
-  entity.get_or_create_control_behavior()  -- its contents go on its wires, even before anything else is wired to it
-  local cb = c.readout.get_or_create_control_behavior()
-  if cb.sections_count == 0 then cb.add_section() end
-  storage.cannons[entity.unit_number] = c
-  if tags and tags.dc_settings then
-    for k, v in pairs(tags.dc_settings) do c[k] = v end
+  if not (c.readout and c.readout.valid) then
+    c.readout = s.create_entity{name = READOUT, position = pos, force = force}
+    c.readout.destructible = false
+    c.sent_space, c.sent_charge = nil, nil
+    local cb = c.readout.get_or_create_control_behavior()
+    if cb.sections_count == 0 then cb.add_section() end
+    route_readout(c)
   end
-  apply_slots(c, entity.get_inventory(CHEST))
-end
-
-local function add_receiver(entity)
-  local ch = storage.next_channel
-  storage.next_channel = ch + 1
-  storage.receivers[entity.unit_number] = {entity = entity, name = "Receiver " .. ch, channel = ch}
 end
 
 local function remove_cannon(unit)
@@ -153,19 +207,109 @@ local function remove_cannon(unit)
   storage.cannons[unit] = nil
 end
 
+local CANNON_SETTINGS = {"target", "cargo", "full_stack", "circuit_target", "target_signal"}
+
+-- What a new building on this spot should inherit: the same shape as a blueprint's or ghost's tags.
+local function remember(entity)
+  local unit = entity.unit_number
+  local c, r = storage.cannons[unit], storage.receivers[unit]
+  if c then
+    local t = {}
+    for _, k in pairs(CANNON_SETTINGS) do t[k] = c[k] end
+    return {dc_settings = t, dc_energy = c.energy and c.energy.valid and c.energy.energy or 0}
+  elseif r then
+    return {dc_receiver = {name = r.name, channel = r.channel, unit = unit}}
+  end
+end
+
+local function spot(entity)
+  return entity.surface.index .. ":" .. entity.position.x .. ":" .. entity.position.y
+end
+
+-- A quality upgrade or a fast replace mines the old building and builds the new one in the same tick.
+local function replaced_here(entity)
+  local key = spot(entity)
+  local old = storage.replaced[key]
+  storage.replaced[key] = nil
+  return old and old.tick == game.tick and old.tags or nil
+end
+
+local function add_cannon(entity, tags)
+  tags = replaced_here(entity) or tags
+  local c = default_cannon(entity)
+  make_helpers(c)
+  entity.get_or_create_control_behavior()  -- its contents go on its wires, even before anything else is wired to it
+  storage.cannons[entity.unit_number] = c
+  if tags and tags.dc_settings then
+    for k, v in pairs(tags.dc_settings) do c[k] = v end
+    move_old_condition(c)  -- a blueprint saved with 0.1.0
+  end
+  if tags and tags.dc_energy then c.energy.energy = tags.dc_energy end
+  forget_missing(c)
+  apply_slots(c, entity.get_inventory(CHEST))
+end
+
+-- Cannons aimed at the old receiver, and capsules on their way to it, now mean this one.
+local function take_over_receiver(old_unit, unit)
+  if not old_unit then return end
+  for _, c in pairs(storage.cannons) do
+    if c.target == old_unit then c.target = unit end
+  end
+  for _, flight in pairs(storage.flights) do
+    if flight.receiver == old_unit then flight.receiver = unit end
+  end
+  storage.inflight[unit] = storage.inflight[old_unit]
+  storage.inflight[old_unit] = nil
+end
+
+local function add_receiver(entity, tags)
+  tags = replaced_here(entity) or tags
+  local unit = entity.unit_number
+  local old = tags and tags.dc_receiver
+  local r = {entity = entity}
+  if old then
+    r.name, r.channel = old.name, old.channel
+    take_over_receiver(old.unit, unit)
+  else
+    r.channel = storage.next_channel
+    r.name = "Receiver " .. r.channel
+    storage.next_channel = r.channel + 1
+  end
+  storage.receivers[unit] = r
+end
+
 local function on_built(e)
   local entity = e.entity
   if not (entity and entity.valid) then return end
   if entity.name == CANNON then add_cannon(entity, e.tags)
-  elseif entity.name == RECEIVER then add_receiver(entity) end
+  elseif entity.name == RECEIVER then add_receiver(entity, e.tags) end
 end
 
 local function on_removed(e)
   local entity = e.entity
   if not (entity and entity.valid and entity.unit_number) then return end
-  if entity.name == CANNON then remove_cannon(entity.unit_number)
-  elseif entity.name == RECEIVER then storage.receivers[entity.unit_number] = nil end
+  local unit = entity.unit_number
+  local tags = remember(entity)
+  if tags and e.name == defines.events.on_entity_died then
+    storage.fallen[unit] = tags
+  elseif tags then
+    storage.replaced[spot(entity)] = {tick = game.tick, tags = tags}
+  end
+  if entity.name == CANNON then remove_cannon(unit)
+  elseif entity.name == RECEIVER then storage.receivers[unit] = nil end
 end
+
+-- A destroyed building's ghost keeps its settings, so what robots rebuild works as it did.
+script.on_event(defines.events.on_post_entity_died, function(e)
+  local fallen = e.unit_number and storage.fallen[e.unit_number]
+  if not fallen then return end
+  storage.fallen[e.unit_number] = nil
+  if e.ghost and e.ghost.valid then
+    local tags = e.ghost.tags or {}
+    for k, v in pairs(fallen) do tags[k] = v end
+    e.ghost.tags = tags
+  end
+end, {{filter = "type", type = "logistic-container"}})
 
 local filters = {{filter = "name", name = CANNON}, {filter = "name", name = RECEIVER}}
 for _, ev in pairs({defines.events.on_built_entity, defines.events.on_robot_built_entity,
@@ -316,49 +460,37 @@ end
 ---------------------------------------------------------------------------------------------------------
 
 local function set_readout(c, space, charge)
+  if c.sent_space == space and c.sent_charge == charge then return end
+  c.sent_space, c.sent_charge = space, charge
   local cb = c.readout.get_or_create_control_behavior()
   local section = cb.get_section(1)
   section.set_slot(1, {value = {type = "virtual", name = SPACE_SIGNAL.name, quality = "normal"}, min = space})
   section.set_slot(2, {value = {type = "virtual", name = CHARGE_SIGNAL.name, quality = "normal"}, min = charge})
 end
 
--- The enable condition, as on an inserter: one signal, or Anything (true if any signal passes) / Everything (true
--- if every signal passes, or there are none). Each can't be picked (the GUI refuses it).
--- The cannon is joined to its readout on both wires, so whatever it sends is on both networks, and reading red +
--- green would count it twice: its contents are counted once, and its two readouts are read as they are (other
--- cannons sharing the wire would add theirs).
-local function condition_met(e, cond, space, charge)
-  local sig, op, k = cond.signal, cond.comparator, cond.constant or 0
-  local inv = e.get_inventory(CHEST)
+-- The game's own condition, from the building's normal circuit tab. Its answer is used as it is, except when the
+-- condition is about Receiver space or Cannon charge: those are this cannon's own numbers, read directly, so a cannon
+-- sharing a wire with others never adds their free space to its own and fires at a full receiver.
+local function condition_met(e, cb, space, charge)
+  local cond = cb.circuit_condition
   local own = {[SPACE_SIGNAL.name] = space, [CHARGE_SIGNAL.name] = charge}
-  local function value(signal, count)
-    local t = signal.type or "item"
-    if t == "virtual" and own[signal.name] then return own[signal.name] end
-    if t == "item" then return count - inv.get_item_count({name = signal.name, quality = signal.quality or "normal"}) end
-    return count
+  local first = cond.first_signal
+  if not (first and first.type == "virtual" and own[first.name]) then return cond.fulfilled end
+  local other = cond.constant or 0
+  local second = cond.second_signal
+  if second then
+    other = second.type == "virtual" and own[second.name] or e.get_signal(second, RED, GREEN)
   end
-  local name = sig.type == "virtual" and sig.name
-  if name == ANYTHING or name == EVERYTHING then
-    local any, all = false, true
-    local function test(v) if compare(v, op, k) then any = true else all = false end end
-    for _, s in pairs(e.get_signals(RED, GREEN) or {}) do
-      if not (s.signal.type == "virtual" and own[s.signal.name]) then
-        local v = value(s.signal, s.count)
-        if v ~= 0 then test(v) end
-      end
-    end
-    for _, v in pairs(own) do if v ~= 0 then test(v) end end
-    if name == ANYTHING then return any end
-    return all
-  end
-  if is_special(sig) then return false end
-  return compare(value(sig, e.get_signal(sig, RED, GREEN)), op, k)
+  return compare(own[first.name], cond.comparator, other)
 end
 
 local function update_cannon(c)
   local e = c.entity
   local inv = e.get_inventory(CHEST)
+  make_helpers(c)
   apply_slots(c, inv)
+  -- there's no event for wires changing, so each cannon looks about once a second, not all on the same tick
+  if (e.unit_number + game.tick / CHECK_EVERY) % WIRE_CHECK_EVERY == 0 then route_readout(c) end
   local r, unit = current_target(c)
   local kind, why
   if r then kind, why = shot_kind(e.surface, r.entity.surface, e.force) else why = "no-target" end
@@ -368,13 +500,11 @@ local function update_cannon(c)
   local charge = need > 0 and math.floor(100 * math.min(1, c.energy.energy / need)) or (kind and 100 or 0)
   local space = r and receiver_space(r, unit) or 0
   set_readout(c, space, charge)
+  c.space, c.charge = space, charge
 
   if not kind then c.status = why return end
-  if c.circuit_enable then
-    local cond = c.condition
-    if not cond.signal then c.status = "disabled" return end
-    if not condition_met(e, cond, space, charge) then c.status = "disabled" return end
-  end
+  local cb = e.get_or_create_control_behavior()
+  if cb.circuit_condition_enabled and not condition_met(e, cb, space, charge) then c.status = "disabled" return end
   local _, capsules = shot_cost(kind)
   local caps = inv[1]
   if not (caps.valid_for_read and caps.name == CAPSULE and caps.count >= capsules) then c.status = "no-capsules" return end
@@ -383,14 +513,22 @@ local function update_cannon(c)
   if not cargo.valid_for_read then c.status = "no-cargo" return end
   if cargo.name ~= c.cargo.name or cargo.quality.name ~= c.cargo.quality then c.status = "wrong-cargo" return end
   if c.full_stack and cargo.count < cargo.prototype.stack_size then c.status = "waiting-full" return end
-  if c.energy.energy < need then c.status = "charging" return end
+  if c.energy.energy < need then
+    c.status = c.energy.is_connected_to_electric_network() and "charging" or "no-power"
+    return
+  end
   fire(c, r, unit, kind)
   c.status = "fired"
+  -- anything reading these from the wire sees the shot straight away, not at the next check
+  c.space = receiver_space(r, unit)
+  c.charge = need > 0 and math.floor(100 * math.min(1, c.energy.energy / need)) or 100
+  set_readout(c, c.space, c.charge)
 end
 
 local refresh_panels -- defined below
 
 script.on_nth_tick(CHECK_EVERY, function()
+  init_storage()  -- a save from a test build of the same version doesn't get on_configuration_changed
   for unit, c in pairs(storage.cannons) do
     if c.entity.valid then update_cannon(c) else remove_cannon(unit) end
   end
@@ -399,13 +537,21 @@ script.on_nth_tick(CHECK_EVERY, function()
   end
   update_flights()
   refresh_panels()
+  if next(storage.replaced) then storage.replaced = {} end
 end)
 
 script.on_init(init_storage)
 script.on_configuration_changed(function()
   init_storage()
-  for _, c in pairs(storage.cannons) do  -- cannons built by 0.1.0 test builds: contents on the wire too
-    if c.entity.valid then c.entity.get_or_create_control_behavior() end
+  for _, c in pairs(storage.cannons) do
+    if c.entity.valid then
+      c.entity.get_or_create_control_behavior()  -- cannons built by 0.1.0 test builds: contents on the wire too
+      move_old_condition(c)
+      forget_missing(c)
+      make_helpers(c)
+      route_readout(c)
+      apply_power(c)
+    end
   end
 end)
 
@@ -472,23 +618,16 @@ local function open_cannon_panel(player, entity)
             tooltip = {"dc-gui.full-stack-tooltip"}}
 
   frame.add{type = "line"}
-  frame.add{type = "label", caption = {"dc-gui.circuit"}, style = "caption_label"}
-  frame.add{type = "checkbox", name = "dc_circuit_enable", caption = {"dc-gui.enable"}, state = c.circuit_enable}
-  local row = frame.add{type = "flow", name = "dc_cond", direction = "horizontal"}
-  row.style.vertical_align = "center"
-  local sig = row.add{type = "choose-elem-button", name = "dc_cond_signal", elem_type = "signal"}
-  sig.elem_value = c.condition.signal
-  local cmp_index = 1
-  for i, op in ipairs(COMPARATORS) do if op == c.condition.comparator then cmp_index = i end end
-  row.add{type = "drop-down", name = "dc_cond_cmp", items = COMPARATORS, selected_index = cmp_index}.style.width = 60
-  local num = row.add{type = "textfield", name = "dc_cond_value", text = tostring(c.condition.constant or 0),
-                      numeric = true, allow_negative = true}
-  num.style.width = 80
   frame.add{type = "checkbox", name = "dc_circuit_target", caption = {"dc-gui.target-by-signal"}, state = c.circuit_target,
             tooltip = {"dc-gui.target-by-signal-tooltip"}}
   local row2 = frame.add{type = "flow", direction = "horizontal"}
   row2.add{type = "choose-elem-button", name = "dc_target_signal", elem_type = "signal"}.elem_value = c.target_signal
-  local hint = frame.add{type = "label", caption = {"dc-gui.readout-hint"}}
+
+  frame.add{type = "line"}
+  frame.add{type = "label", caption = {"dc-gui.signals"}, style = "caption_label", tooltip = {"dc-gui.signals-tooltip"}}
+  frame.add{type = "label", name = "dc_space", tooltip = {"dc-gui.space-tooltip"}}
+  frame.add{type = "label", name = "dc_charge_signal", tooltip = {"dc-gui.charge-tooltip"}}
+  local hint = frame.add{type = "label", caption = {"dc-gui.condition-hint"}}
   hint.style.single_line = false
   hint.style.maximal_width = 300
   hint.style.font_color = {0.7, 0.7, 0.7}
@@ -516,9 +655,12 @@ local function refresh_panel(player)
     local r = current_target(c)
     local kind = r and shot_kind(entity.surface, r.entity.surface, entity.force)
     local need = kind and shot_cost(kind) or 0
-    frame.dc_status.caption = {"dc-gui.status-" .. c.status}
+    local status = c.status == "no-target" and c.circuit_target and "no-channel" or c.status
+    frame.dc_status.caption = {"dc-gui.status-" .. status, kind and select(2, shot_cost(kind)) or 1}
     frame.dc_charge.value = need > 0 and math.min(1, c.energy.energy / need) or 0
     frame.dc_charge_text.caption = need > 0 and {"dc-gui.charge", math.floor(c.energy.energy / 1e6), math.floor(need / 1e6)} or ""
+    frame.dc_space.caption = {"dc-gui.signal-space", c.space or 0}
+    frame.dc_charge_signal.caption = {"dc-gui.signal-charge", c.charge or 0}
   else
     local n = storage.inflight[entity.unit_number] or 0
     frame.dc_incoming.caption = {"dc-gui.incoming", n}
@@ -561,8 +703,6 @@ script.on_event(defines.events.on_gui_selection_state_changed, function(e)
   if el.name == "dc_target" then
     local list = storage.target_lists[e.player_index] or {}
     rec.target = list[el.selected_index - 1]
-  elseif el.name == "dc_cond_cmp" then
-    rec.condition.comparator = COMPARATORS[el.selected_index]
   end
 end)
 
@@ -571,7 +711,6 @@ script.on_event(defines.events.on_gui_checked_state_changed, function(e)
   if not rec then return end
   local el = e.element
   if el.name == "dc_full_stack" then rec.full_stack = el.state
-  elseif el.name == "dc_circuit_enable" then rec.circuit_enable = el.state
   elseif el.name == "dc_circuit_target" then
     rec.circuit_target = el.state
     local frame = game.get_player(e.player_index).gui.relative[PANEL]
@@ -583,15 +722,7 @@ script.on_event(defines.events.on_gui_elem_changed, function(e)
   local rec = open_record(e.player_index)
   if not rec then return end
   local el = e.element
-  if el.name == "dc_cond_signal" then
-    local v = el.elem_value
-    if is_special(v) and v.name ~= ANYTHING and v.name ~= EVERYTHING then
-      el.elem_value = rec.condition.signal
-      game.get_player(e.player_index).create_local_flying_text{text = {"dc-gui.no-each"}, create_at_cursor = true}
-      return
-    end
-    rec.condition.signal = v
-  elseif el.name == "dc_target_signal" then
+  if el.name == "dc_target_signal" then
     local v = el.elem_value
     if is_special(v) then
       el.elem_value = rec.target_signal
@@ -610,8 +741,7 @@ script.on_event(defines.events.on_gui_text_changed, function(e)
   local rec = open_record(e.player_index)
   if not rec then return end
   local el = e.element
-  if el.name == "dc_cond_value" then rec.condition.constant = tonumber(el.text) or 0
-  elseif el.name == "dc_name" then rec.name = el.text ~= "" and el.text or ("Receiver " .. rec.channel)
+  if el.name == "dc_name" then rec.name = el.text ~= "" and el.text or ("Receiver " .. rec.channel)
   elseif el.name == "dc_channel" then rec.channel = tonumber(el.text) or rec.channel end
 end)
 
@@ -619,11 +749,10 @@ end)
 -- Copy / paste and blueprints carry a cannon's settings
 ---------------------------------------------------------------------------------------------------------
 
-local SETTINGS = {"target", "cargo", "full_stack", "circuit_enable", "condition", "circuit_target", "target_signal"}
+-- (The circuit condition is the game's own, so the game copies it.)
 local function settings_of(c)
   local t = {}
-  for _, k in pairs(SETTINGS) do t[k] = c[k] end
-  t.condition = {signal = c.condition.signal, comparator = c.condition.comparator, constant = c.condition.constant}
+  for _, k in pairs(CANNON_SETTINGS) do t[k] = c[k] end
   return t
 end
 
@@ -670,6 +799,8 @@ remote.add_interface("cargo-cannon", {
     local c = storage.cannons[cannon.unit_number]
     if c then
       for k, v in pairs(values) do c[k] = v end
+      move_old_condition(c)  -- so the tests can stand in for a 0.1.0 cannon
+      forget_missing(c)
       apply_slots(c, cannon.get_inventory(CHEST))
     end
   end,

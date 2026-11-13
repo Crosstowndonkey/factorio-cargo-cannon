@@ -5,16 +5,20 @@ Reads the API key from ~/.config/factorio/modportal-api-key (never pass it on th
 The key needs the usages "ModPortal: Publish Mods", "ModPortal: Upload Mods" and "ModPortal: Edit Mods"
 (factorio.com/profile > API keys).
 
-Usage: tools/publish.py [--first | --details]
+Usage: tools/publish.py [--first | --details | --gallery]
   (nothing)  upload a new release
   --first    brand-new mod: publish, then set details and gallery
   --details  update the portal page from docs/portal-description.md; uploads no release
+  --gallery  upload docs/gallery/* and set them as the gallery (in file name order); uploads no release
 Uploading runs tools/package.sh first, so the zip is always fresh.
 """
+import glob
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MOD = "cargo-cannon"
@@ -50,7 +54,32 @@ def curl(url, fields, auth=True):
     return result
 
 
+def gallery():
+    # the portal names each image by its SHA-1 and refuses one it already has, so reuse those
+    with urllib.request.urlopen(f"https://mods.factorio.com/api/mods/{MOD}/full") as r:
+        existing = {img["id"] for img in json.load(r).get("images", [])}
+    ids = []
+    for path in sorted(glob.glob(os.path.join(ROOT, "docs", "gallery", "*.jpg")) +
+                       glob.glob(os.path.join(ROOT, "docs", "gallery", "*.png"))):
+        with open(path, "rb") as f:
+            sha = hashlib.sha1(f.read()).hexdigest()
+        if sha in existing:
+            print("Image:", os.path.basename(path), "already on the portal")
+            ids.append(sha)
+            continue
+        upload_url = curl(f"{API}/images/add", [("mod", MOD)])["upload_url"]
+        image = curl(upload_url, [("image", "@" + path)], auth=False)
+        print("Image:", os.path.basename(path), image.get("url"))
+        ids.append(image["id"])
+    curl(f"{API}/images/edit", [("mod", MOD), ("images", ",".join(ids))])
+    print(f"Gallery set ({len(ids)} images).")
+
+
 def main():
+    if "--gallery" in sys.argv:
+        gallery()
+        print(f"https://mods.factorio.com/mod/{MOD}")
+        return
     if "--details" in sys.argv:
         details = curl(f"{API}/edit_details", [("mod", MOD), ("description", "<" + DESCRIPTION)] + DETAILS)
         print("Details updated:", details.get("url"))

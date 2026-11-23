@@ -46,3 +46,5 @@ with it.
 - `tools/package.sh` builds the zip for the mod portal into dist/.
 
 MIT licence.
+
+Questions, bug reports or ideas: come and chat on the [Donkeywork Games Discord](https://discord.gg/AabyFdsP5p) (#mod-bugs for bugs).

@@ -58,3 +58,5 @@ of its own. With Space Exploration's graphics mods installed, they use Earendel'
 permission - the art stays in his mods and is only referred to, never copied.
 
 Source code (MIT): https://github.com/Crosstowndonkey/factorio-cargo-cannon
+
+Questions, bug reports or ideas: come and chat on the [Donkeywork Games Discord](https://discord.gg/AabyFdsP5p) (#mod-bugs for bugs).

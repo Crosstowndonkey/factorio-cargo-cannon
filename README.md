@@ -42,7 +42,15 @@ with it.
     receivers destroyed mid-flight, a deleted planet, copy / paste, blueprints, the GUI;
   - `edge` (26): rewiring, robot quality upgrades with a capsule in the air, destroyed and rebuilt buildings, no power,
     cargo and signals from removed mods, helpers destroyed behind the mod's back;
-  - `saveload` (tests/dc-saveload, 8): saved with capsules in the air on a headless server, loaded, and landed.
+  - `qa` (17): the 0.2.2 QA pass - quality capsules, a deleted platform whose surface index is reused, cloned
+    buildings, channels, receivers in blueprints and copy / paste, buildings placed without an event, the panel's controls;
+  - `saveload` (tests/dc-saveload, 8): saved with capsules in the air on a headless server, loaded, and landed;
+  - `upgrade` (8): the same, but saved by the last released version (from git) and loaded with this one.
+- `tools/run_screens.sh` opens a real game window for about a minute (throwaway save) and saves screenshots of what
+  headless tests can't see: the panels beside the game's windows, firing, a capsule falling, a crash. It also has the
+  game translate every message and status line. Needs no input: the panel's controls are driven through the mod's own
+  handlers (`remote.call("cargo-cannon", "test_gui_event", event, {player_index, element})`).
+- `tools/run_live.sh` opens the live test bench, for testing by hand.
 - `tools/package.sh` builds the zip for the mod portal into dist/.
 
 MIT licence.

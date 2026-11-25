@@ -35,7 +35,8 @@ Wire it to fire only while Receiver space > 0 and nothing will ever crash.
 - Inserters load and empty both buildings.
 - For robots, the cannon is a **requester chest** (request capsules and cargo) and the receiver a **passive provider**.
   Space platforms have no robots, so use inserters there.
-- Copy / paste and blueprints keep a cannon's settings.
+- Copy / paste and blueprints keep a cannon's settings, and a receiver's name (blueprints keep its channel too, unless
+  another receiver already uses it).
 
 ## Settings
 Energy, capsules and flight time for each kind of shot, the cannon's charging rate and the crash damage are all mod

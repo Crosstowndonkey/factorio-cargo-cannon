@@ -43,6 +43,8 @@ local function signal_exists(signal)
   return not list or list[signal.name] ~= nil
 end
 
+local adopt -- defined below
+
 local function init_storage()
   storage.fallen = storage.fallen or {}        -- unit_number -> settings of a building that just died (for its ghost)
   storage.replaced = storage.replaced or {}    -- spot -> settings of a building mined this tick (it may be an upgrade)
@@ -53,6 +55,11 @@ local function init_storage()
   storage.next_channel = storage.next_channel or 1
   storage.open = storage.open or {}            -- player index -> the entity whose panel is open
   storage.target_lists = storage.target_lists or {} -- player index -> receiver unit_numbers in the drop-down
+  if not storage.buckets then -- cannon unit_numbers, by the tick (mod CHECK_EVERY) they're updated on
+    storage.buckets = {}
+    for i = 0, CHECK_EVERY - 1 do storage.buckets[i] = {} end
+    for unit in pairs(storage.cannons) do storage.buckets[unit % CHECK_EVERY][unit] = true end
+  end
 end
 
 -- Settings for each kind of shot: energy (J), capsules, flight time (ticks)
@@ -70,13 +77,24 @@ end
 ---------------------------------------------------------------------------------------------------------
 
 -- "planet", <planet name>  |  "platform", <location it's stopped at, or nil while travelling>
+-- (Looked up once per surface per tick: asking the game is slow, and every cannon asks. Not saved - it's only ever
+-- used within the tick it was worked out in, so every player's game gets the same answers.)
+local where_cache, where_tick = {}, -1
 local function where(surface)
-  if surface.platform then
-    local loc = surface.platform.space_location
-    return "platform", loc and loc.name
-  elseif surface.planet then
-    return "planet", surface.planet.name
+  if where_tick ~= game.tick then where_cache, where_tick = {}, game.tick end
+  local w = where_cache[surface.index]
+  if not w then
+    if surface.platform then
+      local loc = surface.platform.space_location
+      w = {"platform", loc and loc.name}
+    elseif surface.planet then
+      w = {"planet", surface.planet.name}
+    else
+      w = {}
+    end
+    where_cache[surface.index] = w
   end
+  return w[1], w[2]
 end
 
 -- kind ("orbit" / "interplanetary") or nil + the reason it can't be done
@@ -163,9 +181,12 @@ end
 
 -- Slot 1 only takes capsules; slot 2 only takes the picked cargo, and is locked (inventory bar) until one is picked,
 -- so an inserter or robot can never fill the cargo slot with capsules (or anything else) by mistake.
+local CAPSULE_FILTER = {name = CAPSULE, quality = "normal", comparator = ">="} -- capsules of any quality
 local function apply_slots(c, inv)
   local f1 = inv.get_filter(1)
-  if not (f1 and f1.name == CAPSULE) then inv.set_filter(1, CAPSULE) end
+  if not (f1 and f1.name == CAPSULE and f1.comparator == ">=" and (f1.quality or "normal") == "normal") then
+    inv.set_filter(1, CAPSULE_FILTER)
+  end
   local cargo = c.cargo
   if cargo then
     if inv.get_bar() <= #inv then inv.set_bar() end
@@ -200,7 +221,12 @@ local function make_helpers(c)
   end
 end
 
+-- Cannons are updated a tenth at a time, one bucket per tick, so a big base doesn't stutter every CHECK_EVERY ticks.
+local function bucket_of(unit) return unit % CHECK_EVERY end
+
 local function remove_cannon(unit)
+  if not storage.buckets then init_storage() end
+  storage.buckets[bucket_of(unit)][unit] = nil
   local c = storage.cannons[unit]
   if not c then return end
   for _, helper in pairs({c.energy, c.readout}) do if helper and helper.valid then helper.destroy() end end
@@ -208,6 +234,10 @@ local function remove_cannon(unit)
 end
 
 local CANNON_SETTINGS = {"target", "cargo", "full_stack", "circuit_target", "target_signal"}
+
+local function spot(entity)
+  return entity.surface.index .. ":" .. entity.position.x .. ":" .. entity.position.y
+end
 
 -- What a new building on this spot should inherit: the same shape as a blueprint's or ghost's tags.
 local function remember(entity)
@@ -218,12 +248,8 @@ local function remember(entity)
     for _, k in pairs(CANNON_SETTINGS) do t[k] = c[k] end
     return {dc_settings = t, dc_energy = c.energy and c.energy.valid and c.energy.energy or 0}
   elseif r then
-    return {dc_receiver = {name = r.name, channel = r.channel, unit = unit}}
+    return {dc_receiver = {name = r.name, channel = r.channel, unit = unit, spot = spot(entity)}}
   end
-end
-
-local function spot(entity)
-  return entity.surface.index .. ":" .. entity.position.x .. ":" .. entity.position.y
 end
 
 -- A quality upgrade or a fast replace mines the old building and builds the new one in the same tick.
@@ -240,6 +266,8 @@ local function add_cannon(entity, tags)
   make_helpers(c)
   entity.get_or_create_control_behavior()  -- its contents go on its wires, even before anything else is wired to it
   storage.cannons[entity.unit_number] = c
+  if not storage.buckets then init_storage() end -- (a save from a test build of the same version)
+  storage.buckets[bucket_of(entity.unit_number)][entity.unit_number] = true
   if tags and tags.dc_settings then
     for k, v in pairs(tags.dc_settings) do c[k] = v end
     move_old_condition(c)  -- a blueprint saved with 0.1.0
@@ -262,18 +290,40 @@ local function take_over_receiver(old_unit, unit)
   storage.inflight[old_unit] = nil
 end
 
-local function add_receiver(entity, tags)
+local function channel_in_use(channel, force)
+  for _, r in pairs(storage.receivers) do
+    if r.channel == channel and r.entity.valid and r.entity.force == force then return true end
+  end
+  return false
+end
+
+-- The next channel number no receiver of this force uses yet.
+local function new_channel(force)
+  local channel = storage.next_channel
+  while channel_in_use(channel, force) do channel = channel + 1 end
+  storage.next_channel = channel + 1
+  return channel
+end
+
+-- tags.dc_receiver = {name, channel} from a blueprint, copy or clone; with unit (and spot) when it is the same
+-- receiver coming back: its own ghost rebuilt, or a quality upgrade. Only that one takes over the old receiver's
+-- cannons and capsules; a copy elsewhere just gets the name, and the channel unless another receiver has it.
+local function add_receiver(entity, tags, keep_channel)
   tags = replaced_here(entity) or tags
   local unit = entity.unit_number
   local old = tags and tags.dc_receiver
   local r = {entity = entity}
   if old then
-    r.name, r.channel = old.name, old.channel
-    take_over_receiver(old.unit, unit)
+    local back = old.unit and not storage.receivers[old.unit] and (old.spot == nil or old.spot == spot(entity))
+    r.name = old.name
+    r.channel = old.channel
+    if not (back or keep_channel) and (not r.channel or channel_in_use(r.channel, entity.force)) then
+      r.channel = new_channel(entity.force)
+    end
+    if back then take_over_receiver(old.unit, unit) end
   else
-    r.channel = storage.next_channel
+    r.channel = new_channel(entity.force)
     r.name = "Receiver " .. r.channel
-    storage.next_channel = r.channel + 1
   end
   storage.receivers[unit] = r
 end
@@ -298,6 +348,28 @@ local function on_removed(e)
   if entity.name == CANNON then remove_cannon(unit)
   elseif entity.name == RECEIVER then storage.receivers[unit] = nil end
 end
+
+-- Another mod copied a building (e.g. a spaceship mod moving a ship): the copy works like the original. The hidden
+-- helpers are never copied - the new cannon makes its own.
+local function settings_of(c)
+  local t = {}
+  for _, k in pairs(CANNON_SETTINGS) do t[k] = c[k] end
+  return t
+end
+script.on_event(defines.events.on_entity_cloned, function(e)
+  local src, dst = e.source, e.destination
+  if not (dst and dst.valid) then return end
+  if dst.name == ENERGY or dst.name == READOUT then dst.destroy() return end
+  if dst.name == CANNON then
+    local c = src.valid and storage.cannons[src.unit_number]
+    add_cannon(dst, c and {dc_settings = settings_of(c)} or nil)
+  elseif dst.name == RECEIVER then
+    local r = src.valid and storage.receivers[src.unit_number]
+    -- (keeps the channel too: a ship moved by a mod removes the original, and cannons aiming by channel still find it)
+    add_receiver(dst, r and {dc_receiver = {name = r.name, channel = r.channel}} or nil, true)
+  end
+end, {{filter = "name", name = CANNON}, {filter = "name", name = RECEIVER}, {filter = "name", name = ENERGY},
+      {filter = "name", name = READOUT}})
 
 -- A destroyed building's ghost keeps its settings, so what robots rebuild works as it did.
 script.on_event(defines.events.on_post_entity_died, function(e)
@@ -400,7 +472,7 @@ local function land(flight)
   storage.inflight[unit] = math.max(0, (storage.inflight[unit] or 1) - 1)
   if storage.inflight[unit] == 0 then storage.inflight[unit] = nil end
   local box = flight.box
-  local surface = game.get_surface(flight.surface)
+  local surface = not flight.surface_gone and game.get_surface(flight.surface)
   local f = game.forces[flight.force]
   if not surface then
     if f then f.print({"cargo-cannon.lost", item_text(flight.cargo)}) end
@@ -431,6 +503,14 @@ local function land(flight)
   box.destroy()
 end
 
+-- A capsule on its way to a surface that is deleted is lost, even if a new surface later gets the same index (the
+-- game reuses them: a new space platform would otherwise get the capsule, and its explosion).
+script.on_event(defines.events.on_surface_deleted, function(e)
+  for _, fl in pairs(storage.flights) do
+    if fl.surface == e.surface_index then fl.surface_gone = true end
+  end
+end)
+
 local function update_flights()
   local tick = game.tick
   local flights = storage.flights
@@ -439,7 +519,7 @@ local function update_flights()
     local fl = flights[i]
     if not fl.fell and tick >= fl.arrive - FALL_TICKS then
       fl.fell = true
-      local surface = game.get_surface(fl.surface)
+      local surface = not fl.surface_gone and game.get_surface(fl.surface)
       if surface then
         local p = fl.position
         surface.create_entity{name = FLIGHT, position = {p.x - 10, p.y - 60}, target = p,
@@ -488,9 +568,13 @@ local function update_cannon(c)
   local e = c.entity
   local inv = e.get_inventory(CHEST)
   make_helpers(c)
-  apply_slots(c, inv)
-  -- there's no event for wires changing, so each cannon looks about once a second, not all on the same tick
-  if (e.unit_number + game.tick / CHECK_EVERY) % WIRE_CHECK_EVERY == 0 then route_readout(c) end
+  -- there's no event for wires changing (or for a player setting a slot filter by hand), so each cannon looks
+  -- about once a second; every change the mod makes itself applies the slots straight away
+  c.updates = (c.updates or 0) + 1
+  if c.updates % WIRE_CHECK_EVERY == 0 then
+    route_readout(c)
+    apply_slots(c, inv)
+  end
   local r, unit = current_target(c)
   local kind, why
   if r then kind, why = shot_kind(e.surface, r.entity.surface, e.force) else why = "no-target" end
@@ -527,11 +611,23 @@ end
 
 local refresh_panels -- defined below
 
+-- A cannon or receiver another mod placed without raising an event: look after it from now on.
+adopt = function(entity)
+  if entity.name == CANNON and not storage.cannons[entity.unit_number] then add_cannon(entity)
+  elseif entity.name == RECEIVER and not storage.receivers[entity.unit_number] then add_receiver(entity) end
+end
+
+script.on_event(defines.events.on_tick, function(e)
+  local bucket = storage.buckets and storage.buckets[bucket_of(e.tick)]
+  if not bucket then return end
+  for unit in pairs(bucket) do
+    local c = storage.cannons[unit]
+    if c and c.entity.valid then update_cannon(c) else remove_cannon(unit) end
+  end
+end)
+
 script.on_nth_tick(CHECK_EVERY, function()
   init_storage()  -- a save from a test build of the same version doesn't get on_configuration_changed
-  for unit, c in pairs(storage.cannons) do
-    if c.entity.valid then update_cannon(c) else remove_cannon(unit) end
-  end
   for unit, r in pairs(storage.receivers) do
     if not r.entity.valid then storage.receivers[unit] = nil end
   end
@@ -543,6 +639,10 @@ end)
 script.on_init(init_storage)
 script.on_configuration_changed(function()
   init_storage()
+  -- buildings another mod placed without telling anyone (no build event)
+  for _, surface in pairs(game.surfaces) do
+    for _, ent in pairs(surface.find_entities_filtered{name = {CANNON, RECEIVER}}) do adopt(ent) end
+  end
   for _, c in pairs(storage.cannons) do
     if c.entity.valid then
       c.entity.get_or_create_control_behavior()  -- cannons built by 0.1.0 test builds: contents on the wire too
@@ -655,7 +755,10 @@ local function refresh_panel(player)
     local r = current_target(c)
     local kind = r and shot_kind(entity.surface, r.entity.surface, entity.force)
     local need = kind and shot_cost(kind) or 0
-    local status = c.status == "no-target" and c.circuit_target and "no-channel" or c.status
+    local status = c.status
+    if status == "no-target" and c.circuit_target then
+      status = (c.target_signal and not is_special(c.target_signal)) and "no-channel" or "no-signal"
+    end
     frame.dc_status.caption = {"dc-gui.status-" .. status, kind and select(2, shot_cost(kind)) or 1}
     frame.dc_charge.value = need > 0 and math.min(1, c.energy.energy / need) or 0
     frame.dc_charge_text.caption = need > 0 and {"dc-gui.charge", math.floor(c.energy.energy / 1e6), math.floor(need / 1e6)} or ""
@@ -679,6 +782,7 @@ script.on_event(defines.events.on_gui_opened, function(e)
   close_panel(player)
   local ent = e.entity
   if not (ent and ent.valid) then return end
+  adopt(ent)
   if ent.name == CANNON then open_cannon_panel(player, ent)
   elseif ent.name == RECEIVER then open_receiver_panel(player, ent)
   else return end
@@ -700,6 +804,7 @@ script.on_event(defines.events.on_gui_selection_state_changed, function(e)
   local rec = open_record(e.player_index)
   if not rec then return end
   local el = e.element
+  if not (el and el.valid and el.get_mod() == script.mod_name) then return end -- (another mod's element)
   if el.name == "dc_target" then
     local list = storage.target_lists[e.player_index] or {}
     rec.target = list[el.selected_index - 1]
@@ -710,6 +815,7 @@ script.on_event(defines.events.on_gui_checked_state_changed, function(e)
   local rec = open_record(e.player_index)
   if not rec then return end
   local el = e.element
+  if not (el and el.valid and el.get_mod() == script.mod_name) then return end -- (another mod's element)
   if el.name == "dc_full_stack" then rec.full_stack = el.state
   elseif el.name == "dc_circuit_target" then
     rec.circuit_target = el.state
@@ -722,6 +828,7 @@ script.on_event(defines.events.on_gui_elem_changed, function(e)
   local rec = open_record(e.player_index)
   if not rec then return end
   local el = e.element
+  if not (el and el.valid and el.get_mod() == script.mod_name) then return end -- (another mod's element)
   if el.name == "dc_target_signal" then
     local v = el.elem_value
     if is_special(v) then
@@ -741,6 +848,7 @@ script.on_event(defines.events.on_gui_text_changed, function(e)
   local rec = open_record(e.player_index)
   if not rec then return end
   local el = e.element
+  if not (el and el.valid and el.get_mod() == script.mod_name) then return end -- (another mod's element)
   if el.name == "dc_name" then rec.name = el.text ~= "" and el.text or ("Receiver " .. rec.channel)
   elseif el.name == "dc_channel" then rec.channel = tonumber(el.text) or rec.channel end
 end)
@@ -749,20 +857,20 @@ end)
 -- Copy / paste and blueprints carry a cannon's settings
 ---------------------------------------------------------------------------------------------------------
 
--- (The circuit condition is the game's own, so the game copies it.)
-local function settings_of(c)
-  local t = {}
-  for _, k in pairs(CANNON_SETTINGS) do t[k] = c[k] end
-  return t
-end
-
+-- (The circuit condition is the game's own, so the game copies it.) Between receivers, the name is copied (a
+-- channel is copied only by blueprints, and only when it's free: two receivers on one channel is never what you want).
 script.on_event(defines.events.on_entity_settings_pasted, function(e)
   local src, dst = e.source, e.destination
-  if not (src.valid and dst.valid and src.name == CANNON and dst.name == CANNON) then return end
-  local a, b = storage.cannons[src.unit_number], storage.cannons[dst.unit_number]
-  if a and b then
-    for k, v in pairs(settings_of(a)) do b[k] = v end
-    apply_slots(b, dst.get_inventory(CHEST))
+  if not (src.valid and dst.valid and src.name == dst.name) then return end
+  if src.name == CANNON then
+    local a, b = storage.cannons[src.unit_number], storage.cannons[dst.unit_number]
+    if a and b then
+      for k, v in pairs(settings_of(a)) do b[k] = v end
+      apply_slots(b, dst.get_inventory(CHEST))
+    end
+  elseif src.name == RECEIVER then
+    local a, b = storage.receivers[src.unit_number], storage.receivers[dst.unit_number]
+    if a and b then b.name = a.name end
   end
 end)
 
@@ -784,6 +892,8 @@ script.on_event(defines.events.on_player_setup_blueprint, function(e)
   for index, entity in pairs(e.mapping.get()) do
     local c = entity.valid and entity.name == CANNON and storage.cannons[entity.unit_number]
     if c then bp.set_blueprint_entity_tag(index, "dc_settings", settings_of(c)) end
+    local r = entity.valid and entity.name == RECEIVER and storage.receivers[entity.unit_number]
+    if r then bp.set_blueprint_entity_tag(index, "dc_receiver", {name = r.name, channel = r.channel}) end
   end
 end)
 
@@ -812,6 +922,18 @@ remote.add_interface("cargo-cannon", {
     if values.channel then r.channel = values.channel end
   end,
   flights = function() return #storage.flights end,
+  -- for tests: run this mod's handler for a GUI event (scripts can't raise GUI events), e.g. on an element of its panel
+  test_gui_event = function(event, data)
+    local handler = script.get_event_handler(event)
+    if handler then handler(data) end
+  end,
+  -- for tests: refresh a player's open panel now and return its status line's locale key
+  test_panel_status = function(player)
+    refresh_panel(player)
+    local frame = player.gui.relative[PANEL]
+    local caption = frame and frame.dc_status and frame.dc_status.caption
+    return type(caption) == "table" and caption[1] or nil
+  end,
   -- override a kind of shot's cost ({energy = MJ, capsules = n, flight = seconds}; nil = back to the mod settings)
   set_cost = function(kind, cost)
     storage.cost_override = storage.cost_override or {}

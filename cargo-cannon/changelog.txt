@@ -1,4 +1,25 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.2
+Date: 2026-11-25
+  Bugfixes:
+    - Capsules of uncommon or better quality couldn't be put in the cannon (by hand, inserters or robots). Any quality works now.
+    - A capsule on its way to a space platform that was deleted could land, and explode, on a new platform that took
+      over the deleted one's surface. It is now lost with a message, as it should be.
+    - Cannons and receivers copied by another mod (e.g. a spaceship mod moving a ship) were plain chests, and the copy
+      of a cannon's hidden parts was left behind. The copies now work like the originals.
+    - A new receiver could get a channel number another receiver was already set to by hand.
+    - A rebuilt receiver only takes over the cannons and capsules of the receiver that stood on the same spot; old
+      settings in a blueprint or ghost can no longer pull cannons away from a receiver that's still standing.
+    - Cannons and receivers another mod placed without telling other mods now work (when the game loads, or when opened).
+    - With many cannons the game stuttered every sixth of a second, because every cannon was checked on the same tick
+      (300 cannons: 5 to 7 ms every 10th tick). They're now checked a tenth at a time, and each check is cheaper:
+      the same 300 cannons cost about 0.4 ms a tick, with no spikes.
+  Changes:
+    - Blueprints keep a receiver's name and channel (a new channel if another receiver already uses it), and copy /
+      paste between receivers copies the name.
+    - With "Pick the target by signal" ticked but no signal picked yet, the status now asks for the signal (it said no
+      receiver had the channel).
+---------------------------------------------------------------------------------------------------
 Version: 0.2.1
 Date: 2026-11-20
   Changes:

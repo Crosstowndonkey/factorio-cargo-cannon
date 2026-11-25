@@ -1,13 +1,14 @@
 #!/bin/bash
 # Runs the test suites headless in a throwaway folder (never touches ~/.factorio).
-# Usage: tools/run_tests.sh [suite ...]      suites: main circuit situations edge saveload (default: all)
+# Usage: tools/run_tests.sh [suite ...]      suites: main circuit situations edge qa saveload upgrade (default: all)
+#   upgrade = saveload, but the save is made mid-flight by the last released version (from git), then loaded with this one
 # FACTORIO=/path/to/factorio overrides the game binary.
 # SE_GFX=/folder/with/zips also loads space-exploration-graphics and -5 from that folder (the optional SE art).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FACTORIO="${FACTORIO:-/mnt/GamingSSD/SteamLibrary/steamapps/common/Factorio/bin/x64/factorio}"
 SUITES=("$@")
-[ ${#SUITES[@]} -eq 0 ] && SUITES=(main circuit situations edge saveload)
+[ ${#SUITES[@]} -eq 0 ] && SUITES=(main circuit situations edge qa saveload upgrade)
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/mods" "$WORK/write"
@@ -41,15 +42,22 @@ report() {  # report <log>: the STA lines, and any script error
 FAILED=0
 for suite in "${SUITES[@]}"; do
   echo "=== $suite"
-  if [ "$suite" = saveload ]; then
+  if [ "$suite" = saveload ] || [ "$suite" = upgrade ]; then
     # 1: on a headless server, fire capsules with long flights; stopping the server saves the map mid-flight
     mod_list dc-saveload
+    rm -f "$WORK/sl.zip"
+    if [ "$suite" = upgrade ]; then  # ... with the released version (RELEASED = its commit)
+      rm "$WORK/mods/cargo-cannon"
+      git -C "$ROOT" archive "${RELEASED:-df46f43}" cargo-cannon | tar -x -C "$WORK/mods"
+      grep '"version"' "$WORK/mods/cargo-cannon/info.json"
+    fi
     run --create "$WORK/sl.zip" --map-gen-settings "$ROOT/tests/map-gen-settings.json" > "$WORK/sl-create.log" 2>&1 || { cat "$WORK/sl-create.log"; exit 1; }
     printf '{"name":"cargo-cannon-test","description":"","tags":[],"max_players":0,"visibility":{"public":false,"lan":false},"require_user_verification":false,"auto_pause":false,"autosave_interval":0,"game_password":""}' > "$WORK/server.json"
     timeout -s INT 25 "$FACTORIO" -c "$WORK/config.ini" --mod-directory "$WORK/mods" --start-server "$WORK/sl.zip" \
       --server-settings "$WORK/server.json" --port 34297 < /dev/null > "$WORK/sl-server.log" 2>&1 || true
     report "$WORK/sl-server.log"
     # 2: load that save and let the capsules land
+    if [ "$suite" = upgrade ]; then rm -rf "$WORK/mods/cargo-cannon"; ln -s "$ROOT/cargo-cannon" "$WORK/mods/cargo-cannon"; fi
     run --test-save "$WORK/sl.zip" --test-ticks 6000 > "$WORK/sl-load.log" 2>&1 || true
     report "$WORK/sl-load.log"
     grep -q "STA saveload: .* 0 failed" "$WORK/sl-load.log" || FAILED=1
